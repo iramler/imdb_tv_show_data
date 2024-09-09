@@ -1,0 +1,142 @@
+---
+title: "imdb_prep"
+author: "Ivan Ramler"
+format: html
+---
+
+```{r}
+library(tidyverse)
+```
+
+The goal of this document is to outline a semesterly reproducible way to reduce the size of the IMDB datasets (TV Shows only) for the final project in STAT 113.
+
+Start by importing the TV Show data from IMDb
+
+```{r}
+# get list of popular show IDs
+basics = read_tsv("https://datasets.imdbws.com/title.basics.tsv.gz")
+ratings = read_tsv("https://datasets.imdbws.com/title.ratings.tsv.gz")
+
+```
+
+Determine TV series
+
+```{r}
+
+#unique(basics$titleType)
+
+year = 1993
+top_n = 25
+
+tvseries <- basics %>%
+  filter(titleType == "tvSeries") %>%
+  filter(parse_number(startYear) >= year)
+
+tvseries2 <- left_join(tvseries, ratings, by = "tconst") %>%
+  filter(!isAdult) %>%
+  select('tconst', 'primaryTitle','startYear','endYear','averageRating','numVotes')
+
+
+top_tv <-
+  tvseries2 %>%
+  drop_na(averageRating, numVotes) %>%
+    group_by(startYear) %>%
+    mutate(
+      Rating_Rank = min_rank(desc(averageRating)),
+      nVotes_Rank = min_rank(desc(numVotes))
+    ) %>%
+  filter(Rating_Rank <= top_n | nVotes_Rank <= top_n) 
+```
+
+Load all episode data
+
+```{r}
+episode = read_tsv("https://datasets.imdbws.com/title.episode.tsv.gz")
+```
+
+1)  Subset Episodes (to keep only popular since `year`)
+2)  Attach Episode Ratings (and Votes)
+3)  Attach Episode Name
+
+```{r}
+episode_popular <- episode %>%
+  filter(parentTconst %in% top_tv$tconst) %>%
+  left_join(ratings, by = "tconst") %>%
+  left_join(basics %>% select(1,3), by = "tconst") %>%
+  left_join(basics %>% select(1,3), by = c("parentTconst" = "tconst")) %>%
+  rename(
+    Episode_Name = primaryTitle.x,
+    Show_Name = primaryTitle.y
+         ) %>%
+  left_join(top_tv %>% select("tconst","startYear"), by = c("parentTconst" = "tconst"))
+
+
+popular_tv_shows <- 
+  episode_popular %>%
+    ungroup() %>%
+    select(
+      "Show_Name", "startYear",
+      "Episode_Name", 
+      "seasonNumber", "episodeNumber", 
+  "averageRating", "numVotes", "tconst", "parentTconst"
+  ) %>%
+    mutate(startYear = parse_number(startYear))
+
+# dump commas from show and episode names...also dump NAs in the ratings and/or Votes
+
+popular_tv_shows <- popular_tv_shows %>%
+  mutate(Show_Name = str_remove_all(Show_Name,pattern = ","),
+         Episode_Name = str_remove_all(Episode_Name,pattern = ","),
+         seasonNumber = parse_number(seasonNumber),
+         episodeNumber_in_season = parse_number(episodeNumber)
+         ) %>%
+  drop_na(averageRating, seasonNumber, episodeNumber_in_season) %>%
+  filter(episodeNumber_in_season > 0.01) %>%
+  group_by(Show_Name) %>%
+  arrange(seasonNumber, episodeNumber_in_season) %>%
+  mutate(episodeNumber = row_number()) %>%
+  relocate(episodeNumber_in_season, .after = seasonNumber) %>%
+  rename(episodeNumber_overall = episodeNumber)
+
+    
+```
+
+Save the popular tv show file info
+
+```{r}
+write_csv(x = popular_tv_shows |>
+            select(-parentTconst, -startYear), file = "popular_tv_shows.csv")
+```
+
+```{r}
+
+library("arrow")
+# Directly specify the file name instead of using tempfile()
+parquet = file.path(getwd(), "popular_tv_shows.parquet")
+write_parquet(popular_tv_shows |> select(-parentTconst), sink = parquet)
+
+
+#library("arrow")
+#parquet = tempfile(fileext = "popular_tv_shows.parquet", tmpdir = #getwd())
+#write_parquet(popular_tv_shows |> select(-parentTconst), sink = parquet)
+
+
+#popular_tv_shows2 <- arrow::read_parquet('popular_tv_shows.parquet')
+
+```
+
+```{r}
+#pop_tv <- arrow::read_parquet("popular_tv_shows.parquet")
+
+popular_tv_shows %>%
+  group_by(Show_Name) %>%
+  summarize(startYear = min(startYear),
+            xbarNV = mean(numVotes, na.rm = TRUE),
+            parentTconst = first(parentTconst)
+            ) %>%
+  ungroup() %>%
+  arrange(desc(xbarNV)) %>% select(Show_Name, parentTconst) -> show_names
+
+saveRDS(object = show_names, file = "show_names.rds")
+
+```
