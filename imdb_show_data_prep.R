@@ -15,26 +15,60 @@ ratings = read_tsv("https://datasets.imdbws.com/title.ratings.tsv.gz")
 
 #Determine TV series
 
-year = 1980
-top_n = 50
+# Set parameters
+current_year <- as.numeric(format(Sys.Date(), "%Y"))
+start_year <- 1947  # Always take 2 shows from 1947 onward
+top_n_start <- 100  # Start by selecting 100 shows for the current year
 
+# Filter for TV series starting from 1947
 tvseries <- basics %>%
   filter(titleType == "tvSeries") %>%
-  filter(parse_number(startYear) >= year)
+  filter(parse_number(startYear) >= start_year & parse_number(startYear) <= current_year)  # Filter between 1947 and current year
 
+# Join with ratings and filter adult content
 tvseries2 <- left_join(tvseries, ratings, by = "tconst") %>%
   filter(!isAdult) %>%
   select('tconst', 'primaryTitle','startYear','endYear','averageRating','numVotes')
 
-top_tv <-
-  tvseries2 %>%
+# Create a ranking that selects the top N shows per year
+top_tv <- tvseries2 %>%
   drop_na(averageRating, numVotes) %>%
+  mutate(
+    # Reduce by 2 each year starting from top_n_start, but ensure a minimum of 2 shows from 1947 onwards
+    shows_to_select = ifelse(parse_number(startYear) >= start_year, 
+                             pmax(top_n_start - 2 * (current_year - parse_number(startYear)), 2), 
+                             0)  # Minimum of 2 shows from 1947 onwards
+  ) %>%
   group_by(startYear) %>%
   mutate(
     Rating_Rank = min_rank(desc(averageRating)),
     nVotes_Rank = min_rank(desc(numVotes))
   ) %>%
-  filter(Rating_Rank <= top_n | nVotes_Rank <= top_n) 
+  filter(Rating_Rank <= shows_to_select | nVotes_Rank <= shows_to_select)  # Select top shows for each year
+
+
+# 
+# 
+# year = 1980
+# top_n = 50
+# 
+# tvseries <- basics %>%
+#   filter(titleType == "tvSeries") %>%
+#   filter(parse_number(startYear) >= year)
+# 
+# tvseries2 <- left_join(tvseries, ratings, by = "tconst") %>%
+#   filter(!isAdult) %>%
+#   select('tconst', 'primaryTitle','startYear','endYear','averageRating','numVotes')
+# 
+# top_tv <-
+#   tvseries2 %>%
+#   drop_na(averageRating, numVotes) %>%
+#   group_by(startYear) %>%
+#   mutate(
+#     Rating_Rank = min_rank(desc(averageRating)),
+#     nVotes_Rank = min_rank(desc(numVotes))
+#   ) %>%
+#   filter(Rating_Rank <= top_n | nVotes_Rank <= top_n) 
 
 #Load all episode data
 
