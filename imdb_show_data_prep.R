@@ -139,7 +139,7 @@ popular_tv_shows %>%
   ungroup() %>%
   arrange(desc(xbarNV)) %>% select(Show_Name, parentTconst) -> show_names
 
-saveRDS(object = show_names, file = "data/show_names.rds")
+write.csv(show_names, "data/show_names.csv")
 
 
 # individual show files
